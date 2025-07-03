@@ -2,7 +2,7 @@ name: Security and Dependency Checks
 
 on:
   push:
-    branches: [ 16.0, develop ]
+    branches: [ 16.0, 16.0-develop ]
   pull_request:
     branches: [ 16.0 ]
   schedule:
