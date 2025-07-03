@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- Tree View -->
+    <record id="view_sms_filter_rule_tree" model="ir.ui.view">
+        <field name="name">sms.filter.rule.tree</field>
+        <field name="model">sms.filter.rule</field>
+        <field name="arch" type="xml">
+            <tree string="SMS Filter Rules">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="active"/>
+                <field name="match_type"/>
+                <field name="match_value"/>
+                <field name="action_type"/>
+                <field name="channel_id" optional="hide"/>
+                <field name="stop_processing" optional="show"/>
+            </tree>
+        </field>
+    </record>
+
+    <!-- Form View -->
+    <record id="view_sms_filter_rule_form" model="ir.ui.view">
+        <field name="name">sms.filter.rule.form</field>
+        <field name="model">sms.filter.rule</field>
+        <field name="arch" type="xml">
+            <form string="SMS Filter Rule">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="toggle_active" type="object" class="oe_stat_button" icon="fa-archive">
+                            <field name="active" widget="boolean_button" options='{"terminology": "archive"}'/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" placeholder="Rule Name"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Matching Criteria">
+                            <field name="sequence"/>
+                            <field name="match_type"/>
+                            <field name="match_value" attrs="{'invisible': [('match_type', '=', 'partner')], 'required': [('match_type', '!=', 'partner')]}"/>
+                            <field name="case_sensitive" attrs="{'invisible': [('match_type', 'not in', ['contains', 'regex'])]}"/>
+                        </group>
+                        <group string="Actions">
+                            <field name="action_type"/>
+                            <field name="stop_processing"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Channel Settings" attrs="{'invisible': [('action_type', 'not in', ['channel', 'multi'])]}">
+                            <group>
+                                <field name="channel_id"/>
+                                <field name="auto_create_channel" attrs="{'invisible': [('channel_id', '!=', False)]}"/>
+                                <field name="channel_name" attrs="{'invisible': ['|', ('channel_id', '!=', False), ('auto_create_channel', '=', False)], 'required': [('auto_create_channel', '=', True), ('channel_id', '=', False)]}"/>
+                            </group>
+                        </page>
+
+                        <page string="Partner Settings" attrs="{'invisible': [('action_type', 'not in', ['partner_chatter', 'multi'])]}">
+                            <group>
+                                <field name="partner_search_field"/>
+                            </group>
+                        </page>
+
+                        <page string="Transaction Parsing" attrs="{'invisible': [('action_type', 'not in', ['create_transaction', 'multi'])]}">
+                            <group>
+                                <field name="parse_transaction" attrs="{'invisible': [('action_type', '!=', 'multi')]}"/>
+                                <field name="transaction_regex" widget="ace" options="{'mode': 'text'}" attrs="{'invisible': [('action_type', '=', 'multi'), ('parse_transaction', '=', False)]}"/>
+                            </group>
+                            <div class="alert alert-info" role="alert">
+                                <p>Use named groups in your regex pattern:</p>
+                                <ul>
+                                    <li><code>(?P&lt;amount&gt;...)</code> - Transaction amount</li>
+                                    <li><code>(?P&lt;currency&gt;...)</code> - Currency code (e.g., USD, EUR)</li>
+                                    <li><code>(?P&lt;partner_name&gt;...)</code> - Partner/vendor name</li>
+                                    <li><code>(?P&lt;reference&gt;...)</code> - Transaction reference</li>
+                                </ul>
+                            </div>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View -->
+    <record id="view_sms_filter_rule_search" model="ir.ui.view">
+        <field name="name">sms.filter.rule.search</field>
+        <field name="model">sms.filter.rule</field>
+        <field name="arch" type="xml">
+            <search string="SMS Filter Rules">
+                <field name="name"/>
+                <field name="match_type"/>
+                <field name="action_type"/>
+                <filter string="Active" name="active" domain="[('active', '=', True)]"/>
+                <filter string="Inactive" name="inactive" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter string="Channel Rules" name="channel" domain="[('action_type', 'in', ['channel', 'multi'])]"/>
+                <filter string="Partner Rules" name="partner" domain="[('action_type', 'in', ['partner_chatter', 'multi'])]"/>
+                <filter string="Transaction Rules" name="transaction" domain="[('action_type', 'in', ['create_transaction', 'multi'])]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Match Type" name="group_match_type" context="{'group_by': 'match_type'}"/>
+                    <filter string="Action Type" name="group_action_type" context="{'group_by': 'action_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Action -->
+    <record id="action_sms_filter_rule" model="ir.actions.act_window">
+        <field name="name">SMS Filter Rules</field>
+        <field name="res_model">sms.filter.rule</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_sms_filter_rule_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create SMS Filter Rules
+            </p>
+            <p>
+                Filter rules allow you to automatically process incoming SMS messages based on their content.
+                You can forward OTP codes to channels, add messages to partner records, or parse transaction details.
+            </p>
+        </field>
+    </record>
+
+    <!-- Menu Items -->
+    <menuitem id="menu_sms_filter_rules"
+        name="Filter Rules"
+        parent="menu_sms_message_root"
+        action="action_sms_filter_rule"
+        sequence="20"/>
+</odoo>

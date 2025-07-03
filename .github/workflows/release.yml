@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Validate version matches manifest
+      run: |
+        MANIFEST_VERSION=$(python -c "
+        import ast
+        with open('sms_collector/__manifest__.py', 'r') as f:
+            manifest = ast.literal_eval(f.read())
+        print(manifest['version'])
+        ")
+
+        if [ "${{ steps.version.outputs.version }}" != "$MANIFEST_VERSION" ]; then
+          echo "ERROR: Tag version (${{ steps.version.outputs.version }}) doesn't match manifest version ($MANIFEST_VERSION)"
+          exit 1
+        fi
+
+        echo "✓ Version validation passed: $MANIFEST_VERSION"
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+
+        if [ -z "$LAST_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+        else
+          CHANGELOG=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s" --no-merges)
+        fi
+
+        # Save changelog to file
+        echo "## Changes in v${{ steps.version.outputs.version }}" > CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "$CHANGELOG" >> CHANGELOG.md
+
+        # Output for GitHub release
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat CHANGELOG.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create module package
+      run: |
+        # Create a clean package directory
+        mkdir -p release/sms_collector
+
+        # Copy module files, excluding development files
+        rsync -av \
+          --exclude='.git*' \
+          --exclude='__pycache__' \
+          --exclude='*.pyc' \
+          --exclude='.pytest_cache' \
+          --exclude='coverage.*' \
+          --exclude='bandit-report.json' \
+          --exclude='safety-report.json' \
+          --exclude='.github' \
+          --exclude='migrations/' \
+          ./ release/sms_collector/
+
+        # Create tarball
+        cd release
+        tar -czf sms_collector-v${{ steps.version.outputs.version }}.tar.gz sms_collector/
+
+        # Create zip file
+        zip -r sms_collector-v${{ steps.version.outputs.version }}.zip sms_collector/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: SMS Collector v${{ steps.version.outputs.version }}
+        body: ${{ steps.changelog.outputs.changelog }}
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+        files: |
+          release/sms_collector-v${{ steps.version.outputs.version }}.tar.gz
+          release/sms_collector-v${{ steps.version.outputs.version }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish to OCA/Odoo Community
+      if: "!contains(steps.version.outputs.version, 'alpha') && !contains(steps.version.outputs.version, 'beta')"
+      run: |
+        echo "🚀 Stable release v${{ steps.version.outputs.version }} created!"
+        echo "Consider submitting to:"
+        echo "- Odoo Apps Store: https://apps.odoo.com/"
+        echo "- OCA Community: https://github.com/OCA"
+        echo "- PyPI (if applicable): https://pypi.org/"
+
+  announce-release:
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Extract version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Create announcement template
+      run: |
+        cat > ANNOUNCEMENT.md << 'EOF'
+        # 📱 SMS Collector v${{ steps.version.outputs.version }} Released!
+
+        We're excited to announce the release of **SMS Collector v${{ steps.version.outputs.version }}** - a powerful SMS collection and processing module for Odoo!
+
+        ## 🔥 Key Features
+
+        - **HTTP API Endpoint**: Secure `/sms/upload` endpoint for mobile apps
+        - **Duplicate Prevention**: SHA256-based deduplication system
+        - **Smart Filtering**: Configurable rules for automatic SMS processing
+        - **OTP Channel Forwarding**: Automatically route verification codes
+        - **Partner Integration**: Link SMS messages to existing contacts
+        - **Transaction Parsing**: Extract bank transfer details from SMS
+        - **MinIO Storage**: S3-compatible object storage for archival
+        - **Comprehensive Testing**: Full test suite with 30+ test methods
+
+        ## 📦 Installation
+
+        ```bash
+        # Install dependencies
+        pip install minio
+
+        # Download and install the module
+        wget https://github.com/YOUR_ORG/sms-collector/releases/download/v${{ steps.version.outputs.version }}/sms_collector-v${{ steps.version.outputs.version }}.tar.gz
+        tar -xzf sms_collector-v${{ steps.version.outputs.version }}.tar.gz
+        # Copy to your Odoo addons directory
+        ```
+
+        ## 🔗 Links
+
+        - **GitHub Repository**: https://github.com/YOUR_ORG/sms-collector
+        - **Documentation**: https://github.com/YOUR_ORG/sms-collector/blob/16.0/CLAUDE.md
+        - **Issue Tracker**: https://github.com/YOUR_ORG/sms-collector/issues
+        - **Release Notes**: https://github.com/YOUR_ORG/sms-collector/releases/tag/v${{ steps.version.outputs.version }}
+
+        ## 🙏 Contributing
+
+        We welcome contributions! Please see our contributing guidelines and feel free to submit issues and pull requests.
+
+        ---
+
+        Built with ❤️ for efficient SMS management in Odoo
+        EOF
+
+        echo "📢 Announcement template created:"
+        cat ANNOUNCEMENT.md
+
+    - name: Save announcement
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-announcement-v${{ steps.version.outputs.version }}
+        path: ANNOUNCEMENT.md

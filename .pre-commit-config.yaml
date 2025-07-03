@@ -1,0 +1,104 @@
+---
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=88]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=88]
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        args: [--max-line-length=88, --extend-ignore=E203, W503, E501]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-xml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.32.0
+    hooks:
+      - id: yamllint
+        args: [-d, '{extends: default, rules: {line-length: {max: 120}}}']
+
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: [-r, sms_collector, -f, json, -o, bandit-report.json, --exclude, "*/tests/*"]
+        pass_filenames: false
+        always_run: true
+
+# SMS Collector specific hooks
+  - repo: local
+    hooks:
+      - id: sms-manifest-validation
+        name: Validate SMS Collector manifest
+        entry: python
+        language: system
+        args:
+          - -c
+          - |
+            import ast
+            import sys
+            try:
+                with open('sms_collector/__manifest__.py', 'r') as f:
+                    manifest = ast.literal_eval(f.read())
+                required = ['name', 'version', 'depends', 'data', 'installable']
+                for field in required:
+                    if field not in manifest:
+                        print(f'Missing required field: {field}')
+                        sys.exit(1)
+                # Check SMS Collector specific requirements
+                if 'mail' not in manifest['depends']:
+                    print('SMS Collector requires mail dependency')
+                    sys.exit(1)
+                if 'minio' not in str(manifest):
+                    print('Warning: MinIO dependency should be documented')
+                print(f'✓ Manifest valid: {manifest["name"]} v{manifest["version"]}')
+            except Exception as e:
+                print(f'Manifest validation failed: {e}')
+                sys.exit(1)
+        files: ^sms_collector/__manifest__\.py$
+        pass_filenames: false
+
+      - id: sms-test-coverage
+        name: Check test file existence
+        entry: python
+        language: system
+        args:
+          - -c
+          - |
+            import os
+            import sys
+            test_files = [
+                'sms_collector/tests/test_sms_message.py',
+                'sms_collector/tests/test_sms_filter_rule.py',
+                'sms_collector/tests/test_sms_api.py'
+            ]
+            missing = [f for f in test_files if not os.path.exists(f)]
+            if missing:
+                print(f'Missing test files: {missing}')
+                sys.exit(1)
+            print('✓ All required test files present')
+        pass_filenames: false
+        always_run: true

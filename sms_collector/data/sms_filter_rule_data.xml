@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo noupdate="1">
+    <!-- Example OTP Filter Rule -->
+    <record id="filter_rule_otp" model="sms.filter.rule">
+        <field name="name">OTP Messages</field>
+        <field name="sequence">10</field>
+        <field name="active" eval="False"/>
+        <field name="match_type">regex</field>
+        <field name="match_value">\b(OTP|verification code|verify|code)\b</field>
+        <field name="case_sensitive" eval="False"/>
+        <field name="action_type">channel</field>
+        <field name="auto_create_channel" eval="True"/>
+        <field name="channel_name">#otp</field>
+        <field name="stop_processing" eval="True"/>
+    </record>
+
+    <!-- Example Bank Transfer Filter Rule -->
+    <record id="filter_rule_bank_transfer" model="sms.filter.rule">
+        <field name="name">Bank Transfers</field>
+        <field name="sequence">20</field>
+        <field name="active" eval="False"/>
+        <field name="match_type">regex</field>
+        <field name="match_value">(received|sent|transfer|deposited|withdrawn)</field>
+        <field name="case_sensitive" eval="False"/>
+        <field name="action_type">multi</field>
+        <field name="auto_create_channel" eval="True"/>
+        <field name="channel_name">#banking</field>
+        <field name="parse_transaction" eval="True"/>
+        <field name="transaction_regex"><![CDATA[(?P<currency>[A-Z]{3})\s*(?P<amount>[\d,]+\.?\d*)\s+(?:received from|sent to|transferred from|deposited by)\s+(?P<partner_name>[\w\s]+?)(?:\s+(?:Ref|Reference|Trans)[\s:#]*(?P<reference>[\w\d-]+))?]]></field>
+    </record>
+
+    <!-- Example Partner Messages Filter Rule -->
+    <record id="filter_rule_partner_messages" model="sms.filter.rule">
+        <field name="name">Messages from Known Partners</field>
+        <field name="sequence">100</field>
+        <field name="active" eval="False"/>
+        <field name="match_type">partner</field>
+        <field name="action_type">partner_chatter</field>
+        <field name="partner_search_field">mobile</field>
+    </record>
+</odoo>

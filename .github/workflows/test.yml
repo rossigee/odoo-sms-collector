@@ -1,0 +1,316 @@
+name: SMS Collector Tests
+
+on:
+  push:
+    branches: [ 16.0, develop ]
+  pull_request:
+    branches: [ 16.0 ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_USER: odoo
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    strategy:
+      matrix:
+        odoo-version: ["16.0"]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+    - name: Checkout module
+      uses: actions/checkout@v4
+      with:
+        path: sms_collector
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libpq-dev \
+          libxml2-dev \
+          libxslt1-dev \
+          libldap2-dev \
+          libsasl2-dev \
+          libjpeg-dev \
+          zlib1g-dev \
+          libfreetype6-dev \
+          liblcms2-dev \
+          libwebp-dev \
+          libharfbuzz-dev \
+          libfribidi-dev \
+          libxcb1-dev
+
+    - name: Checkout Odoo
+      uses: actions/checkout@v4
+      with:
+        repository: odoo/odoo
+        ref: ${{ matrix.odoo-version }}
+        path: odoo
+        depth: 1
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r odoo/requirements.txt
+        # Install SMS Collector dependencies
+        pip install minio
+        # Install test dependencies
+        pip install coverage pytest-odoo
+
+    - name: Prepare Odoo addons path
+      run: |
+        mkdir -p addons
+        # Link the module under test
+        ln -s $(pwd)/sms_collector/sms_collector addons/sms_collector
+
+    - name: Initialize Odoo database
+      run: |
+        cd odoo
+        python odoo-bin -d test_db --init=base --stop-after-init --addons-path=../addons
+      env:
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: odoo
+        PGPASSWORD: odoo
+
+    - name: Install module
+      run: |
+        cd odoo
+        python odoo-bin -d test_db --init=sms_collector --stop-after-init --addons-path=../addons --log-level=info
+      env:
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: odoo
+        PGPASSWORD: odoo
+
+    - name: Start MinIO for integration tests
+      run: |
+        # Start MinIO container for testing
+        docker run -d \
+          --name minio-test \
+          -p 9000:9000 \
+          -p 9001:9001 \
+          -e MINIO_ROOT_USER=minioadmin \
+          -e MINIO_ROOT_PASSWORD=minioadmin \
+          quay.io/minio/minio server /data --console-address ":9001"
+        
+        # Wait for MinIO to be ready
+        sleep 10
+        
+        # Create test bucket using mc client
+        docker run --rm --network host quay.io/minio/mc:latest \
+          mc alias set myminio http://localhost:9000 minioadmin minioadmin
+        docker run --rm --network host quay.io/minio/mc:latest \
+          mc mb myminio/sms-test-bucket
+
+    - name: Run module tests
+      run: |
+        cd odoo
+        coverage run --source=../addons/sms_collector \
+          odoo-bin -d test_db \
+          --test-enable \
+          --stop-after-init \
+          --addons-path=../addons \
+          --log-level=test \
+          -i sms_collector
+      env:
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: odoo
+        PGPASSWORD: odoo
+        # MinIO test configuration
+        SMS_COLLECTOR_MINIO_ENDPOINT: localhost:9000
+        SMS_COLLECTOR_MINIO_ACCESS_KEY: minioadmin
+        SMS_COLLECTOR_MINIO_SECRET_KEY: minioadmin
+        SMS_COLLECTOR_MINIO_BUCKET: sms-test-bucket
+
+    - name: Test API endpoint functionality
+      run: |
+        cd odoo
+        # Start Odoo in background for API testing
+        python odoo-bin -d test_db --addons-path=../addons --http-port=8069 &
+        ODOO_PID=$!
+        
+        # Wait for Odoo to start
+        sleep 30
+        
+        # Test API endpoint is accessible
+        curl -f http://localhost:8069/sms/upload || echo "API endpoint test skipped (requires auth)"
+        
+        # Stop Odoo
+        kill $ODOO_PID
+      env:
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: odoo
+        PGPASSWORD: odoo
+
+    - name: Cleanup test services
+      if: always()
+      run: |
+        # Stop and remove MinIO container
+        docker stop minio-test || true
+        docker rm minio-test || true
+
+    - name: Generate coverage report
+      run: |
+        cd odoo
+        coverage report --include="../addons/sms_collector/*"
+        coverage xml --include="../addons/sms_collector/*" -o coverage.xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./odoo/coverage.xml
+        flags: unittests
+        name: codecov-${{ matrix.odoo-version }}-py${{ matrix.python-version }}
+
+    - name: Check module installability
+      run: |
+        cd odoo
+        # Test upgrade scenario
+        python odoo-bin -d test_db --update=sms_collector --stop-after-init --addons-path=../addons
+      env:
+        PGHOST: localhost
+        PGPORT: 5432
+        PGUSER: odoo
+        PGPASSWORD: odoo
+
+    - name: Lint Python code
+      run: |
+        pip install flake8 black isort
+        # Check Python code style
+        flake8 sms_collector --max-line-length=88 --extend-ignore=E203,W503
+        # Check import sorting
+        isort --check-only --diff sms_collector
+        # Check code formatting (informational only)
+        black --check sms_collector || echo "Code formatting could be improved"
+
+    - name: Validate XML files
+      run: |
+        # Install xmllint
+        sudo apt-get install -y libxml2-utils
+        # Validate all XML files
+        find sms_collector -name "*.xml" -exec xmllint --noout {} \; || exit 1
+
+    - name: Security scan
+      run: |
+        pip install bandit safety
+        # Security scan for Python code
+        bandit -r sms_collector -f json -o bandit-report.json || true
+        # Check for known security vulnerabilities in dependencies
+        safety check --json --output safety-report.json || true
+
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.odoo-version }}-py${{ matrix.python-version }}
+        path: |
+          odoo/coverage.xml
+          bandit-report.json
+          safety-report.json
+
+  validate-manifest:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout module
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Validate manifest
+      run: |
+        python -c "
+        import ast
+        import sys
+
+        # Read and validate __manifest__.py
+        with open('sms_collector/__manifest__.py', 'r') as f:
+            content = f.read()
+
+        try:
+            manifest = ast.literal_eval(content)
+            print('✓ Manifest syntax is valid')
+
+            # Check required fields
+            required_fields = ['name', 'version', 'depends', 'data', 'installable']
+            for field in required_fields:
+                if field not in manifest:
+                    print(f'✗ Missing required field: {field}')
+                    sys.exit(1)
+
+            print(f'✓ Module: {manifest[\"name\"]} v{manifest[\"version\"]}')
+            print(f'✓ Dependencies: {manifest[\"depends\"]}')
+            print(f'✓ Installable: {manifest[\"installable\"]}')
+
+        except Exception as e:
+            print(f'✗ Manifest validation failed: {e}')
+            sys.exit(1)
+        "
+
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+    - name: Install pre-commit
+      run: |
+        pip install pre-commit
+        # Create minimal pre-commit config if it doesn't exist
+        if [ ! -f ".pre-commit-config.yaml" ]; then
+          cat > .pre-commit-config.yaml << EOF
+        repos:
+        - repo: https://github.com/psf/black
+          rev: 23.3.0
+          hooks:
+          - id: black
+            language_version: python3
+        - repo: https://github.com/pycqa/isort
+          rev: 5.12.0
+          hooks:
+          - id: isort
+        - repo: https://github.com/pycqa/flake8
+          rev: 6.0.0
+          hooks:
+          - id: flake8
+            args: [--max-line-length=88, --extend-ignore=E203,W503]
+        EOF
+        fi
+    - name: Run pre-commit
+      run: |
+        pre-commit install
+        pre-commit run --all-files

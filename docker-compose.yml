@@ -1,0 +1,20 @@
+---
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: odoo
+      POSTGRES_USER: odoo
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+
+  odoo-test:
+    image: odoo:16
+    user: root
+    depends_on:
+      - postgres
+    volumes:
+      - ./sms_collector:/mnt/extra-addons/sms_collector
+      - ./run-tests.sh:/usr/local/bin/run-tests.sh
+    command: sleep infinity
