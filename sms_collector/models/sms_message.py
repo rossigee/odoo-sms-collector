@@ -107,50 +107,76 @@ class SMSMessage(models.Model):
             minio_access_key = params.get_param("sms_collector.minio_access_key", "")
             minio_secret_key = params.get_param("sms_collector.minio_secret_key", "")
             bucket_name = params.get_param("sms_collector.minio_bucket_name", "")
-            if bucket_name == "":
-                _logger.warn(
-                    "Object storage for SMS messages seems to be misconfigured."
+            
+            # Check if MinIO is configured
+            if not all([minio_endpoint, minio_access_key, minio_secret_key, bucket_name]):
+                _logger.warning(
+                    "MinIO configuration incomplete. Required: endpoint, access_key, secret_key, bucket_name"
                 )
                 return None
 
-            SMSMessage._minio_client = Minio(
-                minio_endpoint,
-                access_key=minio_access_key,
-                secret_key=minio_secret_key,
-                secure=minio_secure,
-            )
+            try:
+                SMSMessage._minio_client = Minio(
+                    minio_endpoint,
+                    access_key=minio_access_key,
+                    secret_key=minio_secret_key,
+                    secure=minio_secure,
+                )
+            except Exception as e:
+                _logger.error(f"Failed to create MinIO client: {str(e)}")
+                return None
+                
         return SMSMessage._minio_client
 
     def _store_message_as_object(self, data):
         params = self.env["ir.config_parameter"].sudo()
-        client = self._get_minio_client(params)
-        if client is None:
-            return
+        
+        try:
+            client = self._get_minio_client(params)
+            if client is None:
+                _logger.warning("MinIO client not configured, skipping object storage")
+                return
 
-        # Get user details
-        user = self.env["res.users"].browse([self.env.uid])
+            # Get user details
+            user = self.env["res.users"].browse([self.env.uid])
 
-        # Calculate SHA256 hash of the data for the object key
-        jsondata = json.dumps(data).encode("utf-8")
-        sha256_hash = hashlib.sha256(jsondata).hexdigest()
-        object_key = f"{user.login}/{sha256_hash}.json"
+            # Calculate SHA256 hash of the data for the object key
+            jsondata = json.dumps(data).encode("utf-8")
+            sha256_hash = hashlib.sha256(jsondata).hexdigest()
+            object_key = f"{user.login}/{sha256_hash}.json"
 
-        # Check if the bucket exists, create it if it doesn't
-        bucket_name = params.get_param("sms_collector.minio_bucket_name")
-        if not client.bucket_exists(bucket_name):
-            _logger.error(f"Bucket does not exist or cannot be found: {bucket_name}")
-            return
+            # Check if the bucket exists, create it if it doesn't
+            bucket_name = params.get_param("sms_collector.minio_bucket_name")
+            
+            try:
+                if not client.bucket_exists(bucket_name):
+                    _logger.error(f"Bucket does not exist or cannot be found: {bucket_name}")
+                    return
+            except S3Error as e:
+                _logger.error(f"MinIO connection error while checking bucket: {str(e)}")
+                return
+            except Exception as e:
+                _logger.error(f"Unexpected error checking MinIO bucket: {str(e)}")
+                return
 
-        # Upload the data to the bucket
-        client.put_object(
-            bucket_name,
-            object_key,
-            io.BytesIO(jsondata),
-            len(jsondata),
-            content_type="application/json",
-        )
-
-        _logger.info(f"Uploaded SMS to '{bucket_name}': {object_key}")
+            # Upload the data to the bucket
+            try:
+                client.put_object(
+                    bucket_name,
+                    object_key,
+                    io.BytesIO(jsondata),
+                    len(jsondata),
+                    content_type="application/json",
+                )
+                _logger.info(f"Uploaded SMS to '{bucket_name}': {object_key}")
+            except S3Error as e:
+                _logger.error(f"MinIO S3 error uploading SMS: {str(e)}")
+            except Exception as e:
+                _logger.error(f"Unexpected error uploading SMS to MinIO: {str(e)}")
+                
+        except Exception as e:
+            _logger.error(f"Failed to store message in MinIO: {str(e)}")
+            # Don't fail SMS creation just because MinIO storage failed
 
     def _find_and_associate_partner(self):
         """Try to find and associate a partner based on the phone number"""
