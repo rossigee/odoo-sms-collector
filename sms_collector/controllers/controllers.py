@@ -38,10 +38,71 @@ class SMSUploadController(Controller):
         data = request.get_json_data()
         _logger.info(json.dumps(data))
 
+        # Validate required fields
+        required_fields = ["_id", "thread_id", "address", "date", "date_sent", "body", "service_center"]
+        missing_fields = []
+        for field in required_fields:
+            if field not in data:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            return {"error": f"Missing required fields: {', '.join(missing_fields)}"}, 400
+        
+        # Validate field types and formats
+        try:
+            # Validate _id is an integer
+            if not isinstance(data["_id"], int):
+                return {"error": "_id must be an integer"}, 400
+            
+            # Validate thread_id is an integer
+            if not isinstance(data["thread_id"], int):
+                return {"error": "thread_id must be an integer"}, 400
+            
+            # Validate address is a non-empty string
+            if not isinstance(data["address"], str) or not data["address"].strip():
+                return {"error": "address must be a non-empty string"}, 400
+            
+            # Validate date fields are integers (epoch milliseconds)
+            if not isinstance(data["date"], int) or data["date"] < 0:
+                return {"error": "date must be a positive integer (epoch milliseconds)"}, 400
+            
+            if not isinstance(data["date_sent"], int) or data["date_sent"] < 0:
+                return {"error": "date_sent must be a positive integer (epoch milliseconds)"}, 400
+            
+            # Validate body is a string
+            if not isinstance(data["body"], str):
+                return {"error": "body must be a string"}, 400
+            
+            # Validate service_center is a string (can be empty)
+            if not isinstance(data["service_center"], str):
+                return {"error": "service_center must be a string"}, 400
+            
+            # Sanitize body for null characters
+            data["body"] = data["body"].translate({ord(c): None for c in "\u0000"})
+            
+            # Validate body length (reasonable SMS limit)
+            if len(data["body"]) > 160000:  # Allow concatenated SMS but with reasonable limit
+                return {"error": "body exceeds maximum length of 160000 characters"}, 400
+            
+            # Validate address format (basic phone number validation)
+            # Allow various phone formats but ensure it's not obviously invalid
+            address_clean = data["address"].replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+            if not address_clean:
+                return {"error": "address is empty after cleaning"}, 400
+            
+            # Check if it starts with + and digits, or just digits
+            if not (address_clean.startswith("+") and address_clean[1:].isdigit()) and not address_clean.isdigit():
+                # Also allow alphanumeric for short codes
+                if not address_clean.replace("+", "").replace("-", "").replace("_", "").isalnum():
+                    return {"error": "address must be a valid phone number or short code"}, 400
+            
+        except Exception as e:
+            _logger.error(f"Error validating input data: {str(e)}")
+            return {"error": f"Invalid input data: {str(e)}"}, 400
+
         # Handle message appropriately within Odoo (renaming underscore-prefixed id field)
         data["idx"] = data.pop("_id")
         data["phone_user_id"] = user_id
-        data["body"] = data["body"].translate({ord(c): None for c in "\u0000"})
 
         try:
             # Create will return existing record if duplicate is detected
