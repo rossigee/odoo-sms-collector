@@ -107,9 +107,11 @@ class SMSMessage(models.Model):
             minio_access_key = params.get_param("sms_collector.minio_access_key", "")
             minio_secret_key = params.get_param("sms_collector.minio_secret_key", "")
             bucket_name = params.get_param("sms_collector.minio_bucket_name", "")
-            
+
             # Check if MinIO is configured
-            if not all([minio_endpoint, minio_access_key, minio_secret_key, bucket_name]):
+            if not all(
+                [minio_endpoint, minio_access_key, minio_secret_key, bucket_name]
+            ):
                 _logger.warning(
                     "MinIO configuration incomplete. Required: endpoint, access_key, secret_key, bucket_name"
                 )
@@ -125,12 +127,12 @@ class SMSMessage(models.Model):
             except Exception as e:
                 _logger.error(f"Failed to create MinIO client: {str(e)}")
                 return None
-                
+
         return SMSMessage._minio_client
 
     def _store_message_as_object(self, data):
         params = self.env["ir.config_parameter"].sudo()
-        
+
         try:
             client = self._get_minio_client(params)
             if client is None:
@@ -147,10 +149,12 @@ class SMSMessage(models.Model):
 
             # Check if the bucket exists, create it if it doesn't
             bucket_name = params.get_param("sms_collector.minio_bucket_name")
-            
+
             try:
                 if not client.bucket_exists(bucket_name):
-                    _logger.error(f"Bucket does not exist or cannot be found: {bucket_name}")
+                    _logger.error(
+                        f"Bucket does not exist or cannot be found: {bucket_name}"
+                    )
                     return
             except S3Error as e:
                 _logger.error(f"MinIO connection error while checking bucket: {str(e)}")
@@ -173,7 +177,7 @@ class SMSMessage(models.Model):
                 _logger.error(f"MinIO S3 error uploading SMS: {str(e)}")
             except Exception as e:
                 _logger.error(f"Unexpected error uploading SMS to MinIO: {str(e)}")
-                
+
         except Exception as e:
             _logger.error(f"Failed to store message in MinIO: {str(e)}")
             # Don't fail SMS creation just because MinIO storage failed
