@@ -293,22 +293,22 @@ jobs:
         # Create minimal pre-commit config if it doesn't exist
         if [ ! -f ".pre-commit-config.yaml" ]; then
           cat > .pre-commit-config.yaml << 'EOF'
-repos:
-  - repo: https://github.com/psf/black
-    rev: 23.3.0
-    hooks:
-      - id: black
-        language_version: python3
-  - repo: https://github.com/pycqa/isort
-    rev: 5.12.0
-    hooks:
-      - id: isort
-  - repo: https://github.com/pycqa/flake8
-    rev: 6.0.0
-    hooks:
-      - id: flake8
-        args: [--max-line-length=120, --extend-ignore=E203,W503,E501,E402,F401]
-EOF
+          repos:
+            - repo: https://github.com/psf/black
+              rev: 23.3.0
+              hooks:
+                - id: black
+                  language_version: python3
+            - repo: https://github.com/pycqa/isort
+              rev: 5.12.0
+              hooks:
+                - id: isort
+            - repo: https://github.com/pycqa/flake8
+              rev: 6.0.0
+              hooks:
+                - id: flake8
+                  args: [--max-line-length=120, --extend-ignore=E203,W503,E501,E402,F401]
+          EOF
         fi
     - name: Run pre-commit
       run: |
