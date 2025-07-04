@@ -49,18 +49,21 @@ cp -r sms_collector /path/to/odoo/addons/
 
 ## Important Implementation Details
 
-1. **MinIO Integration**: The module expects MinIO configuration in Odoo settings. Failures in MinIO operations are currently not handled gracefully.
+1. **MinIO Integration**: The module gracefully handles MinIO failures - SMS messages are still stored in PostgreSQL even if MinIO storage fails. All MinIO operations are wrapped in try-catch blocks with appropriate logging.
 
 2. **API Format**: The `/sms/upload` endpoint expects:
    ```json
    {
-     "phone_number": "+1234567890",
-     "message": "SMS content",
-     "date_received": "2024-01-01 12:00:00",
-     "date_sent": "2024-01-01 11:59:00",
-     "thread_id": "optional_thread_id"
+     "_id": 12345,
+     "thread_id": 67890,
+     "address": "+1234567890",
+     "date": 1704067200000,
+     "date_sent": 1704067100000,
+     "body": "SMS content",
+     "service_center": "+1234567890"
    }
    ```
+   All fields are required and validated for type and format.
 
 3. **SMS Filtering**: Messages are automatically processed through filter rules that can:
    - Forward OTP messages to dedicated channels
@@ -68,16 +71,18 @@ cp -r sms_collector /path/to/odoo/addons/
    - Parse transaction details using regex patterns
    - Stop processing on match or continue through all rules
 
-4. **Security**: API keys are stored in plain text. Consider implementing:
-   - Hashed API key storage
-   - Rate limiting
-   - Request validation
+4. **Security**: 
+   - API keys are stored in plain text (standard Odoo behavior)
+   - Bearer token authentication via Authorization header
+   - Comprehensive input validation on all fields
+   - Always use HTTPS in production
 
-5. **Testing**: Currently no unit tests exist. Priority areas for testing:
+5. **Testing**: Priority areas for testing:
    - API endpoint authentication
-   - SMS data validation
-   - MinIO connection handling
+   - SMS data validation edge cases
+   - MinIO failure scenarios
    - Partner linking logic
+   - Filter rule processing
 
 ## Migration Notes
 
@@ -90,7 +95,5 @@ cp -r sms_collector /path/to/odoo/addons/
 
 ## Known Issues
 
-- No error handling for MinIO connection failures
-- Missing data access rules in security configuration
-- API keys stored in plain text
-- No input validation on SMS upload endpoint
+- API keys stored in plain text (standard Odoo behavior - documented in security considerations)
+- No rate limiting implemented (should be done at reverse proxy level)

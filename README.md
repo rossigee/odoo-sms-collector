@@ -5,12 +5,13 @@ A powerful SMS collection and processing module that provides an HTTP API endpoi
 ## 📱 Key Features
 
 - **HTTP API Endpoint**: Secure `/sms/upload` endpoint with Bearer token authentication
+- **Input Validation**: Comprehensive validation for all API fields with detailed error messages
 - **Duplicate Prevention**: SHA256-based deduplication ensures no duplicate messages
 - **Smart Filtering**: Configurable rules for automatic SMS processing
 - **OTP Detection**: Automatically route verification codes to dedicated channels
 - **Partner Integration**: Link SMS messages to existing contacts in your database
 - **Transaction Parsing**: Extract and process bank transfer details from SMS
-- **MinIO/S3 Storage**: Archive messages in object storage for compliance
+- **MinIO/S3 Storage**: Archive messages in object storage with graceful error handling
 - **Comprehensive Testing**: Full test suite with 30+ test methods
 
 ## 🚀 Quick Start
@@ -64,11 +65,12 @@ Channel Name: #otp
 
 ## 🛡️ Security
 
-- **API Authentication**: Bearer token authentication for all uploads
+- **API Authentication**: Bearer token authentication (API keys stored in plain text - use HTTPS)
+- **Input Validation**: Comprehensive field validation with type checking and sanitization
 - **Duplicate Prevention**: SHA256 hashing prevents duplicate messages
 - **Access Control**: Role-based permissions for viewing and managing SMS
-- **Data Validation**: Input sanitization and SQL injection protection
-- **Storage Security**: Optional encryption in MinIO/S3 storage
+- **Data Protection**: Null character sanitization and SQL injection protection
+- **Storage Security**: Optional MinIO/S3 archival with failure resilience
 
 ## 📖 API Documentation
 
@@ -80,22 +82,34 @@ Authorization: Bearer YOUR_API_KEY
 Content-Type: application/json
 
 {
-  "_id": 12345,
-  "thread_id": 1,
-  "address": "+1234567890",
-  "date": 1640995200000,
-  "date_sent": 1640995000000,
-  "body": "Your message text",
-  "service_center": "+1234567891"
+  "_id": 12345,              # Required: integer
+  "thread_id": 1,            # Required: integer
+  "address": "+1234567890",  # Required: phone number or short code
+  "date": 1640995200000,     # Required: epoch milliseconds
+  "date_sent": 1640995000000,# Required: epoch milliseconds
+  "body": "Your message text",# Required: string (max 160,000 chars)
+  "service_center": "+1234567891" # Required: string
 }
 ```
 
 ### Response
 
 ```json
+# Success
 {
   "success": "true",
   "message_id": 123
+}
+
+# Duplicate (still returns 200 OK)
+{
+  "success": "true",
+  "message": "Duplicate message, skipped"
+}
+
+# Validation Error (400)
+{
+  "error": "Missing required fields: _id, body"
 }
 ```
 
@@ -151,16 +165,24 @@ Contributions are welcome! Please:
 5. Ensure all tests pass
 6. Submit a pull request
 
+## 📚 Documentation
+
+- **[API Reference](sms_collector/docs/api.rst)**: Complete API documentation with examples
+- **[Configuration Guide](sms_collector/docs/configuration.rst)**: Detailed setup instructions
+- **[Development Guide](CLAUDE.md)**: Guidelines for contributors and developers
+
 ## 📞 Support
 
 - **Issues**: Report bugs and feature requests on GitHub
-- **Documentation**: See CLAUDE.md for development guidelines
+- **Documentation**: See docs folder for comprehensive guides
 - **Security**: Use GitHub's security tab for vulnerability reports
 
 ---
 
 **💡 Pro Tips**: 
 - Enable example filter rules in SMS Collector > Filter Rules
-- Use MinIO/S3 for long-term SMS archival and compliance
+- Use MinIO/S3 for long-term SMS archival (failures won't block SMS storage)
+- Always use HTTPS in production to protect API keys
 - Set up channels before enabling OTP forwarding rules
 - Test filter rules with the built-in message browser
+- Rotate API keys regularly for better security
