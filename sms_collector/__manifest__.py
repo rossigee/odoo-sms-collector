@@ -3,7 +3,7 @@
 
 {
     "name": "SMS Collector",
-    "version": "16.0.2.0.2",
+    "version": "16.0.2.1.0",
     "author": "Ross Golder",
     "website": "https://golder.org/",
     "license": "AGPL-3",
@@ -14,7 +14,6 @@
     """,
     "depends": [
         "base",
-        "account",
         "mail",
     ],
     "data": [
@@ -22,7 +21,9 @@
         "data/sms_filter_rule_data.xml",
         "views/res_config_settings_views.xml",
         "views/sms_message.xml",
+        "views/sms_device.xml",
         "views/sms_filter_rule.xml",
+        "views/sms_stats.xml",
     ],
     "installable": True,
 }

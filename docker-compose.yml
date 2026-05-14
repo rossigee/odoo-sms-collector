@@ -8,12 +8,18 @@ services:
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   odoo-test:
     image: odoo:16
     user: root
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - ./sms_collector:/mnt/extra-addons/sms_collector
       - ./run-tests.sh:/usr/local/bin/run-tests.sh

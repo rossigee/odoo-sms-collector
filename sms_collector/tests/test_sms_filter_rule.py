@@ -268,28 +268,35 @@ class TestSMSFilterRule(TransactionCase):
             mock_create.assert_called_once_with(sms)
 
     def test_rule_sequence_processing(self):
-        """Test that rules are processed in sequence order"""
-        # Create rules with different sequences
-        rule1 = self.env["sms.filter.rule"].create(
+        """Test that stop_processing on the first matching rule prevents further rule execution"""
+        # Two separate channels so we can count posts per rule
+        channel1 = self.env["mail.channel"].create(
+            {"name": "Sequence Channel 1", "channel_type": "channel"}
+        )
+        channel2 = self.env["mail.channel"].create(
+            {"name": "Sequence Channel 2", "channel_type": "channel"}
+        )
+
+        self.env["sms.filter.rule"].create(
             {
                 "name": "First Rule",
                 "sequence": 10,
                 "match_type": "contains",
                 "match_value": "test",
                 "action_type": "channel",
-                "channel_id": self.test_channel.id,
+                "channel_id": channel1.id,
                 "stop_processing": True,
             }
         )
 
-        rule2 = self.env["sms.filter.rule"].create(
+        self.env["sms.filter.rule"].create(
             {
                 "name": "Second Rule",
                 "sequence": 20,
                 "match_type": "contains",
                 "match_value": "test",
                 "action_type": "channel",
-                "channel_id": self.test_channel.id,
+                "channel_id": channel2.id,
             }
         )
 
@@ -298,48 +305,55 @@ class TestSMSFilterRule(TransactionCase):
         sms_data["idx"] = 12347
         sms = self.env["sms.message"].create(sms_data)
 
-        with patch.object(rule1, "_execute_action") as mock1, patch.object(
-            rule2, "_execute_action"
-        ) as mock2:
-            self.env["sms.filter.rule"].process_sms_message(sms)
+        msgs_before_1 = len(channel1.message_ids)
+        msgs_before_2 = len(channel2.message_ids)
 
-            # First rule should execute and stop processing
-            mock1.assert_called_once_with(sms)
-            mock2.assert_not_called()
+        self.env["sms.filter.rule"].process_sms_message(sms)
+
+        # First rule should have posted; second rule should not (stopped)
+        self.assertEqual(len(channel1.message_ids), msgs_before_1 + 1)
+        self.assertEqual(len(channel2.message_ids), msgs_before_2)
 
     def test_stop_processing_flag(self):
         """Test stop_processing flag prevents further rule execution"""
-        rule1 = self.env["sms.filter.rule"].create(
+        channel1 = self.env["mail.channel"].create(
+            {"name": "Stop Channel 1", "channel_type": "channel"}
+        )
+        channel2 = self.env["mail.channel"].create(
+            {"name": "Stop Channel 2", "channel_type": "channel"}
+        )
+
+        self.env["sms.filter.rule"].create(
             {
                 "name": "Stop Rule",
                 "sequence": 10,
                 "match_type": "contains",
                 "match_value": "OTP",
                 "action_type": "channel",
-                "channel_id": self.test_channel.id,
+                "channel_id": channel1.id,
                 "stop_processing": True,
             }
         )
 
-        rule2 = self.env["sms.filter.rule"].create(
+        self.env["sms.filter.rule"].create(
             {
                 "name": "Continue Rule",
                 "sequence": 20,
                 "match_type": "contains",
                 "match_value": "OTP",
                 "action_type": "channel",
-                "channel_id": self.test_channel.id,
+                "channel_id": channel2.id,
                 "stop_processing": False,
             }
         )
 
         sms = self.env["sms.message"].create(self.sample_sms_data)
 
-        with patch.object(rule1, "_execute_action") as mock1, patch.object(
-            rule2, "_execute_action"
-        ) as mock2:
-            self.env["sms.filter.rule"].process_sms_message(sms)
+        msgs_before_1 = len(channel1.message_ids)
+        msgs_before_2 = len(channel2.message_ids)
 
-            # Only first rule should execute
-            mock1.assert_called_once()
-            mock2.assert_not_called()
+        self.env["sms.filter.rule"].process_sms_message(sms)
+
+        # Only first rule should have posted
+        self.assertEqual(len(channel1.message_ids), msgs_before_1 + 1)
+        self.assertEqual(len(channel2.message_ids), msgs_before_2)

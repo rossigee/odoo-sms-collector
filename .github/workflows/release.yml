@@ -162,7 +162,7 @@ jobs:
         ## 🔗 Links
 
         - **GitHub Repository**: https://github.com/YOUR_ORG/sms-collector
-        - **Documentation**: https://github.com/YOUR_ORG/sms-collector/blob/16.0/CLAUDE.md
+        - **Documentation**: https://github.com/YOUR_ORG/sms-collector/blob/16.0/AGENTS.md
         - **Issue Tracker**: https://github.com/YOUR_ORG/sms-collector/issues
         - **Release Notes**: https://github.com/YOUR_ORG/sms-collector/releases/tag/v${{ steps.version.outputs.version }}
 

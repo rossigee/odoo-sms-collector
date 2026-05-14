@@ -18,7 +18,37 @@
         <field name="perm_read" eval="True"/>
         <field name="perm_write" eval="True"/>
         <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="False"/>
+        <field name="group_id" eval="ref('base.group_user')"/>
+    </record>
+
+    <record id="sms_message_acl_admin" model="ir.model.access">
+        <field name="name">Admin full access to SMS messages</field>
+        <field name="model_id" ref="model_sms_message"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
         <field name="perm_unlink" eval="True"/>
+        <field name="group_id" eval="ref('base.group_system')"/>
+    </record>
+
+    <record id="sms_device_acl_admin" model="ir.model.access">
+        <field name="name">Admin full access to SMS devices</field>
+        <field name="model_id" ref="model_sms_device"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+        <field name="group_id" eval="ref('base.group_system')"/>
+    </record>
+
+    <record id="sms_device_acl_user" model="ir.model.access">
+        <field name="name">User read access to SMS devices</field>
+        <field name="model_id" ref="model_sms_device"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="False"/>
         <field name="group_id" eval="ref('base.group_user')"/>
     </record>
 

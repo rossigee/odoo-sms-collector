@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Graph view: messages over time -->
+        <record id="sms_message_view_graph" model="ir.ui.view">
+            <field name="name">sms.message.view.graph</field>
+            <field name="model">sms.message</field>
+            <field name="arch" type="xml">
+                <graph string="SMS Messages" type="bar">
+                    <field name="date_received" interval="day" type="row"/>
+                    <field name="id" type="measure" string="Count"/>
+                </graph>
+            </field>
+        </record>
+
+        <!-- Pivot view -->
+        <record id="sms_message_view_pivot" model="ir.ui.view">
+            <field name="name">sms.message.view.pivot</field>
+            <field name="model">sms.message</field>
+            <field name="arch" type="xml">
+                <pivot string="SMS Messages" display_quantity="true">
+                    <field name="date_received" interval="day" type="row"/>
+                    <field name="phone_user_id" type="col"/>
+                    <field name="id" type="measure" string="Count"/>
+                </pivot>
+            </field>
+        </record>
+
+        <!-- Stats action with graph + pivot -->
+        <record id="sms_message_stats_action" model="ir.actions.act_window">
+            <field name="name">SMS Statistics</field>
+            <field name="res_model">sms.message</field>
+            <field name="view_mode">graph,pivot</field>
+            <field name="context">{
+                'search_default_group_date': 1
+            }</field>
+            <field name="help" type="html">
+                <p class="o_view_nocontent_smiling_face">No SMS messages yet</p>
+                <p>Statistics will appear here once messages have been collected.</p>
+            </field>
+        </record>
+
+        <menuitem id="menu_sms_stats"
+            name="Statistics"
+            parent="menu_sms_message_root"
+            action="sms_message_stats_action"
+            sequence="30"/>
+    </data>
+</odoo>

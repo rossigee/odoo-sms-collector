@@ -216,7 +216,7 @@ class TestSMSAPI(HttpCase):
         )
 
         # Should return an error
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 400)
         response_data = response.json()
         self.assertIn("error", response_data)
 
@@ -266,4 +266,193 @@ class TestSMSAPI(HttpCase):
         )
 
         # Should be rejected due to wrong scope
+        self.assertEqual(response.status_code, 401)
+
+
+class TestSMSBulkAPI(HttpCase):
+    def setUp(self):
+        super(TestSMSBulkAPI, self).setUp()
+
+        self.test_user = self.env["res.users"].create(
+            {
+                "name": "Bulk API User",
+                "login": "bulk_api_user",
+                "email": "bulk_api@example.com",
+            }
+        )
+
+        self.api_key = (
+            self.env["res.users.apikeys"]
+            .sudo()
+            .create(
+                {
+                    "user_id": self.test_user.id,
+                    "name": "Bulk SMS API Key",
+                    "key": "bulk_api_key_12345",
+                    "scope": "rpc",
+                }
+            )
+        )
+
+        self.auth_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key.key}",
+        }
+
+        self.sample_message = {
+            "_id": 10001,
+            "thread_id": 1,
+            "address": "+1234567890",
+            "date": 1640995200000,
+            "date_sent": 1640995000000,
+            "body": "Bulk test message",
+            "service_center": "+1234567891",
+        }
+
+    def _bulk_payload(self, messages):
+        return json.dumps({"messages": messages})
+
+    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    def test_bulk_upload_single_message(self, mock_store):
+        """Bulk endpoint accepts a single-element batch"""
+        mock_store.return_value = None
+
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload([self.sample_message]),
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["summary"]["total"], 1)
+        self.assertEqual(body["summary"]["accepted"], 1)
+        self.assertEqual(body["summary"]["errors"], 0)
+        self.assertIn("message_id", body["results"][0])
+
+    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    def test_bulk_upload_multiple_messages(self, mock_store):
+        """Bulk endpoint stores all messages and returns correct summary"""
+        mock_store.return_value = None
+
+        messages = [
+            dict(self.sample_message, **{"_id": 10001 + i, "body": f"Message {i}"})
+            for i in range(5)
+        ]
+
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload(messages),
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["summary"]["total"], 5)
+        self.assertEqual(body["summary"]["accepted"], 5)
+        self.assertEqual(body["summary"]["errors"], 0)
+        self.assertEqual(len(body["results"]), 5)
+
+        # Verify all stored
+        count = self.env["sms.message"].search_count(
+            [("phone_user_id", "=", self.test_user.id)]
+        )
+        self.assertEqual(count, 5)
+
+    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    def test_bulk_upload_partial_errors(self, mock_store):
+        """Invalid messages in a batch are reported individually; valid ones are stored"""
+        mock_store.return_value = None
+
+        messages = [
+            self.sample_message,
+            {"_id": "not-an-int", "body": "bad"},  # invalid
+            dict(self.sample_message, **{"_id": 10002, "body": "Good message 2"}),
+        ]
+
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload(messages),
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["summary"]["total"], 3)
+        self.assertEqual(body["summary"]["accepted"], 2)
+        self.assertEqual(body["summary"]["errors"], 1)
+
+        # Index 1 should be the error
+        error_results = [r for r in body["results"] if "error" in r]
+        self.assertEqual(len(error_results), 1)
+        self.assertEqual(error_results[0]["index"], 1)
+
+    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    def test_bulk_upload_duplicates_counted(self, mock_store):
+        """Duplicate messages within a batch do not raise errors"""
+        mock_store.return_value = None
+
+        messages = [self.sample_message, self.sample_message]
+
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload(messages),
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        # Both should succeed (second returns existing record)
+        self.assertEqual(body["summary"]["errors"], 0)
+        self.assertEqual(len(body["results"]), 2)
+        # Both results point to the same message_id
+        ids = [r["message_id"] for r in body["results"]]
+        self.assertEqual(ids[0], ids[1])
+
+        # Only one record should exist
+        count = self.env["sms.message"].search_count(
+            [("address", "=", "+1234567890"), ("body", "=", "Bulk test message")]
+        )
+        self.assertEqual(count, 1)
+
+    def test_bulk_upload_missing_messages_key(self):
+        """Request without messages key returns 400"""
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=json.dumps({"data": []}),
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("messages", response.json()["error"])
+
+    def test_bulk_upload_empty_array(self):
+        """Empty messages array returns 400"""
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload([]),
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_bulk_upload_exceeds_max(self):
+        """Batch larger than the 1000-message limit returns 400"""
+        messages = [
+            dict(self.sample_message, **{"_id": i})
+            for i in range(1001)
+        ]
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload(messages),
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("1000", response.json()["error"])
+
+    def test_bulk_upload_requires_auth(self):
+        """Bulk endpoint rejects unauthenticated requests"""
+        response = self.url_open(
+            "/sms/upload/bulk",
+            data=self._bulk_payload([self.sample_message]),
+            headers={"Content-Type": "application/json"},
+        )
         self.assertEqual(response.status_code, 401)

@@ -34,7 +34,7 @@ Go to Settings > Technical > System Parameters and configure:
 - `sms_collector.minio_endpoint`: Your MinIO/S3 endpoint
 - `sms_collector.minio_access_key`: Access key
 - `sms_collector.minio_secret_key`: Secret key
-- `sms_collector.minio_bucket_name`: Bucket name for SMS storage
+- `sms_collector.bucket_name`: Bucket name for SMS storage
 
 ### 3. Create API Keys for Mobile Apps
 

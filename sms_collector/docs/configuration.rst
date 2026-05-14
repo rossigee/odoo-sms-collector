@@ -101,7 +101,7 @@ For archival storage, configure MinIO:
    * - sms_collector.minio_secret_key
      - Secret key
      - minioadmin123
-   * - sms_collector.minio_bucket_name
+   * - sms_collector.bucket_name
      - Bucket for SMS storage
      - sms-archive
 
@@ -196,7 +196,7 @@ Add to your Odoo configuration file::
     # SMS Collector settings
     sms_collector_minio_endpoint = minio.example.com:9000
     sms_collector_minio_secure = True
-    sms_collector_minio_bucket_name = sms-archive
+    sms_collector_bucket_name = sms-archive
 
 Security Configuration
 ======================

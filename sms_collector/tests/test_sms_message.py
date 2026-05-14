@@ -163,3 +163,76 @@ class TestSMSMessage(TransactionCase):
         self.assertNotEqual(sms1.message_hash, sms2.message_hash)
         self.assertEqual(sms1.body, sms2.body)  # Same content
         self.assertNotEqual(sms1.address, sms2.address)  # Different sender
+
+    def test_device_id_stored(self):
+        """Test that device_id is stored when provided"""
+        device = self.env["sms.device"].create(
+            {"name": "Test Phone", "user_id": self.test_user.id}
+        )
+        sms_data = dict(self.sample_sms_data, device_id=device.id)
+        sms = self.env["sms.message"].create(sms_data)
+
+        self.assertEqual(sms.device_id, device)
+
+    def test_device_id_optional(self):
+        """Test that device_id is not required (backward compatibility)"""
+        sms = self.env["sms.message"].create(self.sample_sms_data)
+        self.assertFalse(sms.device_id)
+
+    def test_requeue_from_minio_not_configured(self):
+        """requeue_from_minio returns an error dict when MinIO is not configured"""
+        result = self.env["sms.message"].requeue_from_minio()
+        self.assertIn("error", result)
+
+    def test_requeue_from_minio_creates_and_skips(self):
+        """requeue_from_minio creates new messages and skips duplicates"""
+        from unittest.mock import MagicMock, patch
+
+        existing_sms = self.env["sms.message"].create(self.sample_sms_data)
+
+        # Build a second payload (different body/idx = new message)
+        new_payload = dict(
+            self.sample_sms_data,
+            idx=99999,
+            body="A brand new message",
+        )
+
+        # Two archived objects: one duplicate, one new
+        archived = [self.sample_sms_data, new_payload]
+
+        def fake_list_objects(bucket, recursive=False):
+            objs = []
+            for i, _ in enumerate(archived):
+                o = MagicMock()
+                o.object_name = f"user/device/{i}.json"
+                objs.append(o)
+            return objs
+
+        def fake_get_object(bucket, key):
+            idx = int(key.split("/")[2].split(".")[0])
+            data = archived[idx]
+            resp = MagicMock()
+            resp.read.return_value = __import__("json").dumps(data).encode()
+            resp.close = MagicMock()
+            resp.release_conn = MagicMock()
+            return resp
+
+        mock_client = MagicMock()
+        mock_client.bucket_exists.return_value = True
+        mock_client.list_objects.side_effect = fake_list_objects
+        mock_client.get_object.side_effect = fake_get_object
+
+        with patch.object(
+            self.env["sms.message"].__class__,
+            "_get_minio_client",
+            return_value=mock_client,
+        ):
+            # Also need bucket_name param
+            self.env["ir.config_parameter"].sudo().set_param(
+                "sms_collector.bucket_name", "test-bucket"
+            )
+            result = self.env["sms.message"].requeue_from_minio()
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["errors"], 0)

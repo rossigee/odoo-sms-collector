@@ -11,10 +11,10 @@ export PGPASSWORD=odoo
 pip install minio coverage
 
 # Initialize database
-odoo -d test_db --init=base --stop-after-init
+odoo -d test_db --init=base --stop-after-init --without-demo=all
 
 # Install module and run tests
-odoo -d test_db --init=sms_collector --stop-after-init --test-enable --test-tags=/sms_collector --log-level=info
+odoo -d test_db --init=sms_collector --stop-after-init --test-enable --test-tags=/sms_collector --log-level=test --without-demo=all
 
 # Alternative: run tests with coverage
 # coverage run --source=sms_collector $(which odoo) -d test_db --init=sms_collector --stop-after-init --test-enable --test-tags=/sms_collector --log-level=info

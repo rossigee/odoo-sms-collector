@@ -32,7 +32,7 @@ To enable object storage for SMS archival:
    * ``sms_collector.minio_secure``: Use HTTPS (True/False)
    * ``sms_collector.minio_access_key``: MinIO access key
    * ``sms_collector.minio_secret_key``: MinIO secret key
-   * ``sms_collector.minio_bucket_name``: Bucket name for SMS storage
+   * ``sms_collector.bucket_name``: Bucket name for SMS storage
 
 API Authentication
 ------------------

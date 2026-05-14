@@ -30,8 +30,8 @@
                                         <field name="sms_collector_minio_secret_key"/>
                                     </div>
                                     <div class="row mt16">
-                                        <label for="sms_collector_minio_bucket_name" string="Minio bucket name:" class="col-lg-3 o_light_label"/>
-                                        <field name="sms_collector_minio_bucket_name"/>
+                                        <label for="sms_collector_bucket_name" string="Bucket name:" class="col-lg-3 o_light_label"/>
+                                        <field name="sms_collector_bucket_name"/>
                                     </div>
                                 </div>
                             </div>

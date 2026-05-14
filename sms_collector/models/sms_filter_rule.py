@@ -3,6 +3,8 @@
 import logging
 import re
 
+from markupsafe import Markup, escape
+
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
@@ -17,7 +19,6 @@ class SMSFilterRule(models.Model):
     sequence = fields.Integer(string="Sequence", default=10)
     active = fields.Boolean(string="Active", default=True)
 
-    # Matching criteria
     match_type = fields.Selection(
         [
             ("contains", "Contains Text"),
@@ -35,7 +36,6 @@ class SMSFilterRule(models.Model):
     )
     case_sensitive = fields.Boolean(string="Case Sensitive", default=False)
 
-    # Actions
     action_type = fields.Selection(
         [
             ("channel", "Post to Channel"),
@@ -51,7 +51,6 @@ class SMSFilterRule(models.Model):
     auto_create_channel = fields.Boolean(string="Auto-create Channel", default=True)
     channel_name = fields.Char(string="Channel Name (if auto-create)")
 
-    # Transaction parsing
     parse_transaction = fields.Boolean(string="Parse as Transaction")
     transaction_regex = fields.Text(
         string="Transaction Parser Regex",
@@ -59,7 +58,6 @@ class SMSFilterRule(models.Model):
         default=r"(?P<amount>[\d,]+\.?\d*)\s*(?P<currency>[A-Z]{3}).*?(?:from|to)\s*(?P<partner_name>[\w\s]+)",
     )
 
-    # Additional options
     stop_processing = fields.Boolean(
         string="Stop Processing Further Rules", default=False
     )
@@ -77,7 +75,6 @@ class SMSFilterRule(models.Model):
 
     @api.model
     def process_sms_message(self, sms_record):
-        """Process an SMS message through all active filter rules"""
         rules = self.search([("active", "=", True)], order="sequence")
 
         for rule in rules:
@@ -87,24 +84,28 @@ class SMSFilterRule(models.Model):
                     break
 
     def _match_sms(self, sms_record):
-        """Check if SMS matches this rule"""
         if self.match_type == "contains":
-            text = sms_record.body if self.case_sensitive else sms_record.body.lower()
+            if not self.match_value:
+                return False
+            body = sms_record.body or ""
+            text = body if self.case_sensitive else body.lower()
             search_text = (
                 self.match_value if self.case_sensitive else self.match_value.lower()
             )
             return search_text in text
 
         elif self.match_type == "regex":
+            if not self.match_value:
+                return False
             flags = 0 if self.case_sensitive else re.IGNORECASE
             try:
-                return bool(re.search(self.match_value, sms_record.body, flags))
+                return bool(re.search(self.match_value, sms_record.body or "", flags))
             except re.error:
                 _logger.error(f"Invalid regex in rule {self.name}: {self.match_value}")
                 return False
 
         elif self.match_type == "sender":
-            return self.match_value in (sms_record.address or "")
+            return bool(self.match_value) and self.match_value in (sms_record.address or "")
 
         elif self.match_type == "partner":
             return bool(sms_record.partner_id)
@@ -112,7 +113,6 @@ class SMSFilterRule(models.Model):
         return False
 
     def _execute_action(self, sms_record):
-        """Execute the configured action for matched SMS"""
         if self.action_type == "channel":
             self._post_to_channel(sms_record)
         elif self.action_type == "partner_chatter":
@@ -128,11 +128,9 @@ class SMSFilterRule(models.Model):
                 self._create_transaction(sms_record)
 
     def _post_to_channel(self, sms_record):
-        """Post SMS to specified channel"""
         channel = self.channel_id
 
         if not channel and self.auto_create_channel and self.channel_name:
-            # Create channel if it doesn't exist
             channel = (
                 self.env["mail.channel"]
                 .sudo()
@@ -155,12 +153,18 @@ class SMSFilterRule(models.Model):
                 self.channel_id = channel
 
         if channel:
-            body = f"""<div>
-                <strong>SMS from {sms_record.address}</strong><br/>
-                <em>Received: {sms_record.date_received}</em><br/>
-                <br/>
-                {sms_record.body}
-            </div>"""
+            body = Markup(
+                "<div>"
+                "<strong>SMS from {address}</strong><br/>"
+                "<em>Received: {date_received}</em><br/>"
+                "<br/>"
+                "{body}"
+                "</div>"
+            ).format(
+                address=escape(sms_record.address or ""),
+                date_received=escape(str(sms_record.date_received)),
+                body=escape(sms_record.body or ""),
+            )
 
             channel.message_post(
                 body=body,
@@ -171,14 +175,11 @@ class SMSFilterRule(models.Model):
             )
 
     def _add_to_partner_chatter(self, sms_record):
-        """Add SMS to partner's chatter"""
         partner = sms_record.partner_id
 
         if not partner and self.partner_search_field:
-            # Try to find partner based on phone number
             search_value = sms_record.address
             if search_value:
-                # Clean phone number for search
                 search_value = search_value.replace(" ", "").replace("-", "")
                 domain = [(self.partner_search_field, "ilike", search_value)]
                 partner = self.env["res.partner"].search(domain, limit=1)
@@ -187,12 +188,20 @@ class SMSFilterRule(models.Model):
                     sms_record.partner_id = partner
 
         if partner:
-            body = f"""<div>
-                <strong>SMS {('from' if sms_record.phone_user_id else 'to')} {sms_record.address}</strong><br/>
-                <em>{sms_record.date_received}</em><br/>
-                <br/>
-                {sms_record.body}
-            </div>"""
+            direction = "from" if sms_record.phone_user_id else "to"
+            body = Markup(
+                "<div>"
+                "<strong>SMS {direction} {address}</strong><br/>"
+                "<em>{date_received}</em><br/>"
+                "<br/>"
+                "{body}"
+                "</div>"
+            ).format(
+                direction=direction,
+                address=escape(sms_record.address or ""),
+                date_received=escape(str(sms_record.date_received)),
+                body=escape(sms_record.body or ""),
+            )
 
             partner.message_post(
                 body=body,
@@ -201,16 +210,14 @@ class SMSFilterRule(models.Model):
             )
 
     def _create_transaction(self, sms_record):
-        """Parse SMS and create account transaction"""
         if not self.transaction_regex:
             return
 
         try:
-            match = re.search(self.transaction_regex, sms_record.body, re.IGNORECASE)
+            match = re.search(self.transaction_regex, sms_record.body or "", re.IGNORECASE)
             if match:
                 data = match.groupdict()
 
-                # Extract amount
                 amount_str = data.get("amount", "0").replace(",", "")
                 try:
                     amount = float(amount_str)
@@ -218,7 +225,6 @@ class SMSFilterRule(models.Model):
                     _logger.error(f"Could not parse amount: {amount_str}")
                     return
 
-                # Find or create partner
                 partner_name = data.get("partner_name", "").strip()
                 partner = None
                 if partner_name:
@@ -227,28 +233,32 @@ class SMSFilterRule(models.Model):
                     )
 
                     if not partner:
-                        partner = self.env["res.partner"].create(
-                            {
-                                "name": partner_name,
-                                "is_company": True,
-                            }
+                        _logger.warning(
+                            f"Transaction SMS from {sms_record.address} references unknown partner "
+                            f"'{partner_name}' — skipping partner creation"
                         )
 
-                # Log transaction details (extend this to create actual transactions)
                 _logger.info(
                     f"Parsed transaction: {amount} {data.get('currency', 'USD')} - {partner_name}"
                 )
 
-                # Post to configured channel about the transaction
                 if self.channel_id:
-                    body = f"""<div>
-                        <strong>Transaction Detected</strong><br/>
-                        Amount: {amount} {data.get('currency', 'USD')}<br/>
-                        Partner: {partner_name}<br/>
-                        Reference: {data.get('reference', 'N/A')}<br/>
-                        <br/>
-                        Original SMS: {sms_record.body}
-                    </div>"""
+                    body = Markup(
+                        "<div>"
+                        "<strong>Transaction Detected</strong><br/>"
+                        "Amount: {amount} {currency}<br/>"
+                        "Partner: {partner_name}<br/>"
+                        "Reference: {reference}<br/>"
+                        "<br/>"
+                        "Original SMS: {body}"
+                        "</div>"
+                    ).format(
+                        amount=escape(str(amount)),
+                        currency=escape(data.get("currency", "USD")),
+                        partner_name=escape(partner_name),
+                        reference=escape(data.get("reference", "N/A")),
+                        body=escape(sms_record.body or ""),
+                    )
 
                     self.channel_id.message_post(
                         body=body,
