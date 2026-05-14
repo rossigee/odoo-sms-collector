@@ -74,7 +74,7 @@ jobs:
         repository: odoo/odoo
         ref: ${{ matrix.odoo-version }}
         path: odoo
-        depth: 1
+        fetch-depth: 1
 
     - name: Install Python dependencies
       run: |

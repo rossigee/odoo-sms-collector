@@ -156,12 +156,12 @@ jobs:
         pip install requests minio
 
     - name: Download Odoo
-      uses: actions/checkout@v4
-      with:
-        repository: odoo/odoo
-        ref: 16.0
-        path: odoo
-        depth: 1
+           uses: actions/checkout@v4
+           with:
+             repository: odoo/odoo
+             ref: 16.0
+             path: odoo
+             fetch-depth: 1
 
     - name: Install Odoo dependencies
       run: |
