@@ -60,7 +60,7 @@ class SMSMessage(models.Model):
 
     @api.model
     def create(self, vals_list):
-        body = (vals_list.get("body") or "").translate({ord(c): None for c in " "})
+        body = (vals_list.get("body") or "").translate({ord(c): None for c in "\x00"})
         date_sent_dt = self._epoch_to_dt(vals_list["date_sent"])
 
         real_vals = {
@@ -184,6 +184,7 @@ class SMSMessage(models.Model):
             [
                 "|",
                 "|",
+                "|",
                 ("phone", "ilike", phone_clean),
                 ("mobile", "ilike", phone_clean),
                 ("phone", "ilike", self.address),
@@ -236,7 +237,7 @@ class SMSMessage(models.Model):
                 data = json.loads(raw.decode("utf-8"))
 
                 # Determine the expected hash without calling create
-                body = (data.get("body") or "").translate({ord(c): None for c in " "})
+                body = (data.get("body") or "").translate({ord(c): None for c in "\x00"})
                 date_sent_dt = self._epoch_to_dt(data["date_sent"])
                 expected_hash = self._compute_hash(
                     data["address"], date_sent_dt, body, data["thread_id"]

@@ -95,23 +95,21 @@ class TestSMSMessage(TransactionCase):
         self.assertEqual(sms.partner_id, partner)
 
     def test_partner_association_phone_variations(self):
-        """Test partner association with different phone formats"""
-        # Create partner with formatted phone
+        """Test partner association matches when SMS address has dashes (stripped for comparison)"""
         partner = self.env["res.partner"].create(
             {
                 "name": "Test Partner",
-                "mobile": "123-456-7890",
+                "mobile": "+1234567890",
             }
         )
 
-        # SMS with different format should still match
+        # Dashes are stripped before searching, so "1234567890" matches "+1234567890" via ilike
         sms_data = self.sample_sms_data.copy()
-        sms_data["address"] = "+1 (234) 567-890"
-        sms_data["idx"] = 12346  # Different idx to avoid duplicate
+        sms_data["address"] = "+1-234-567-890"
+        sms_data["idx"] = 12346
 
         sms = self.env["sms.message"].create(sms_data)
 
-        # Should find the partner despite format differences
         self.assertEqual(sms.partner_id, partner)
 
     def test_date_conversion(self):

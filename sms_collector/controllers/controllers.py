@@ -21,6 +21,10 @@ _REQUIRED_FIELDS = [
 _MAX_BULK = 1000
 
 
+def _json_response(data, status=200):
+    return request.make_json_response(data, status=status)
+
+
 def _validate_payload(data):
     """Validate and sanitize a single SMS payload dict.
 
@@ -56,7 +60,7 @@ def _validate_payload(data):
         if not isinstance(data["service_center"], str):
             return None, "service_center must be a string"
 
-        body = data["body"].translate({ord(c): None for c in " "})
+        body = data["body"].translate({ord(c): None for c in "\x00"})
 
         if len(body) > 160000:
             return None, "body exceeds maximum length of 160000 characters"
@@ -90,23 +94,23 @@ def _validate_payload(data):
 def _authenticate():
     """Validate the Bearer token and return (user_id, user, device_id, error_response).
 
-    On failure the first three values are None and error_response is a (dict, status) tuple.
-    On success, error_response is None and device_id is the sms.device record id (int).
+    On failure the first three values are None and error_response is a Response object.
+    On success, error_response is None.
     """
     auth_header = request.httprequest.headers.get("Authorization")
     if not auth_header:
-        return None, None, None, ({"error": "No Authorization header provided"}, 401)
+        return None, None, None, _json_response({"error": "No Authorization header provided"}, 401)
     if not auth_header.startswith("Bearer "):
-        return None, None, None, ({"error": "Invalid Authorization format"}, 401)
+        return None, None, None, _json_response({"error": "Invalid Authorization format"}, 401)
     api_key = auth_header.split(" ")[1]
     user_id = request.env["res.users.apikeys"]._check_credentials(
         scope="rpc", key=api_key
     )
     if not user_id:
-        return None, None, None, ({"error": "Invalid API key"}, 401)
+        return None, None, None, _json_response({"error": "Invalid API key"}, 401)
     user = request.env["res.users"].sudo().browse(user_id)
     if not user.exists():
-        return None, None, None, ({"error": "Invalid API key"}, 401)
+        return None, None, None, _json_response({"error": "Invalid API key"}, 401)
 
     device = _find_or_create_device(user)
 
@@ -114,12 +118,7 @@ def _authenticate():
 
 
 def _find_or_create_device(user):
-    """Return the active sms.device for this user, creating one if none exists.
-
-    When a user has multiple devices, the most recently seen one is used. Users
-    who need per-device tracking should create named devices in the Odoo UI and
-    the controller will consistently pick the most-recently-active one.
-    """
+    """Return the active sms.device for this user, creating one if none exists."""
     Device = user.env["sms.device"].sudo()
     device = Device.search(
         [("user_id", "=", user.id), ("active", "=", True)],
@@ -133,21 +132,32 @@ def _find_or_create_device(user):
     return device
 
 
+def _parse_json_body():
+    """Parse the request body as JSON; return (data, error_response)."""
+    try:
+        data = json.loads(request.httprequest.data or b"{}")
+    except (ValueError, TypeError) as e:
+        return None, _json_response({"error": f"Invalid JSON: {str(e)}"}, 400)
+    return data, None
+
+
 class SMSUploadController(Controller):
-    @route("/sms/upload", methods=["POST"], auth="public", type="json")
+    @route("/sms/upload", methods=["POST"], auth="public", type="http", csrf=False)
     def upload(self, **kw):
-        # Odoo's built-in auth="bearer" doesn't suit public API keys
         user_id, user, device_id, err = _authenticate()
         if err:
             return err
 
-        data = request.get_json_data()
+        data, err = _parse_json_body()
+        if err:
+            return err
+
         if not isinstance(data, dict):
-            return {"error": "Request body must be a JSON object"}, 400
+            return _json_response({"error": "Request body must be a JSON object"}, 400)
 
         cleaned, error = _validate_payload(data)
         if error:
-            return {"error": error}, 400
+            return _json_response({"error": error}, 400)
 
         _logger.info(json.dumps(cleaned))
 
@@ -158,31 +168,34 @@ class SMSUploadController(Controller):
         try:
             sms_record = request.env["sms.message"].with_user(user).create(cleaned)
             if sms_record:
-                return {"success": "true", "message_id": sms_record.id}, 200
+                return _json_response({"success": "true", "message_id": sms_record.id})
             else:
-                return {"error": "Failed to create SMS message"}, 500
+                return _json_response({"error": "Failed to create SMS message"}, 500)
         except Exception as e:
             _logger.error(f"Error creating SMS message: {str(e)}")
             if "unique_message_hash" in str(e):
-                return {"success": "true", "message": "Duplicate message, skipped"}, 200
-            return {"error": str(e)}, 500
+                return _json_response({"success": "true", "message": "Duplicate message, skipped"})
+            return _json_response({"error": str(e)}, 500)
 
-    @route("/sms/upload/bulk", methods=["POST"], auth="public", type="json")
+    @route("/sms/upload/bulk", methods=["POST"], auth="public", type="http", csrf=False)
     def upload_bulk(self, **kw):
         user_id, user, device_id, err = _authenticate()
         if err:
             return err
 
-        data = request.get_json_data()
+        data, err = _parse_json_body()
+        if err:
+            return err
+
         if not isinstance(data, dict):
-            return {"error": "Request body must be a JSON object"}, 400
+            return _json_response({"error": "Request body must be a JSON object"}, 400)
 
         messages = data.get("messages")
         if not isinstance(messages, list) or not messages:
-            return {"error": "messages must be a non-empty array"}, 400
+            return _json_response({"error": "messages must be a non-empty array"}, 400)
 
         if len(messages) > _MAX_BULK:
-            return {"error": f"Batch size exceeds maximum of {_MAX_BULK}"}, 400
+            return _json_response({"error": f"Batch size exceeds maximum of {_MAX_BULK}"}, 400)
 
         results = []
         accepted = 0
@@ -213,11 +226,11 @@ class SMSUploadController(Controller):
                     results.append({"index": i, "error": str(e)})
                 errors += 1
 
-        return {
+        return _json_response({
             "results": results,
             "summary": {
                 "total": len(messages),
                 "accepted": accepted,
                 "errors": errors,
             },
-        }, 200
+        })

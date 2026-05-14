@@ -16,6 +16,7 @@ class SMSDevice(models.Model):
         default="android",
     )
     last_seen = fields.Datetime(string="Last Seen", readonly=True)
+    sms_message_ids = fields.One2many("sms.message", "device_id", string="SMS Messages")
     message_count = fields.Integer(
         string="Messages", compute="_compute_message_count", store=False
     )
@@ -29,12 +30,10 @@ class SMSDevice(models.Model):
         )
     ]
 
-    @api.depends("user_id")
+    @api.depends("sms_message_ids")
     def _compute_message_count(self):
         for device in self:
-            device.message_count = self.env["sms.message"].search_count(
-                [("device_id", "=", device.id)]
-            )
+            device.message_count = len(device.sms_message_ids)
 
     def action_view_messages(self):
         return {

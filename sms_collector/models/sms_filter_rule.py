@@ -145,8 +145,6 @@ class SMSFilterRule(models.Model):
                         {
                             "name": self.channel_name,
                             "channel_type": "channel",
-                            "public": "groups",
-                            "group_public_id": self.env.ref("base.group_user").id,
                         }
                     )
                 )

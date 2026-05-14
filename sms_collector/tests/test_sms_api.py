@@ -10,7 +10,6 @@ class TestSMSAPI(HttpCase):
     def setUp(self):
         super(TestSMSAPI, self).setUp()
 
-        # Create test user with API key
         self.test_user = self.env["res.users"].create(
             {
                 "name": "Test API User",
@@ -19,21 +18,13 @@ class TestSMSAPI(HttpCase):
             }
         )
 
-        # Create API key for testing
-        self.api_key = (
+        # res.users.apikeys stores only the hash; _generate returns the raw key
+        self.api_key_value = (
             self.env["res.users.apikeys"]
-            .sudo()
-            .create(
-                {
-                    "user_id": self.test_user.id,
-                    "name": "Test SMS API Key",
-                    "key": "test_api_key_12345",
-                    "scope": "rpc",
-                }
-            )
+            .with_user(self.test_user)
+            ._generate("rpc", "Test SMS API Key")
         )
 
-        # Sample SMS payload
         self.sample_payload = {
             "_id": 12345,
             "thread_id": 1,
@@ -47,7 +38,6 @@ class TestSMSAPI(HttpCase):
     def test_api_endpoint_exists(self):
         """Test that the SMS upload endpoint exists"""
         response = self.url_open("/sms/upload", data=json.dumps({}))
-        # Should not return 404
         self.assertNotEqual(response.status_code, 404)
 
     def test_missing_authorization_header(self):
@@ -95,10 +85,9 @@ class TestSMSAPI(HttpCase):
         self.assertIn("error", response_data)
         self.assertIn("Invalid API key", response_data["error"])
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_successful_sms_upload(self, mock_store):
         """Test successful SMS upload with valid API key"""
-        # Mock MinIO to avoid actual storage during tests
         mock_store.return_value = None
 
         response = self.url_open(
@@ -106,7 +95,7 @@ class TestSMSAPI(HttpCase):
             data=json.dumps(self.sample_payload),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key.key}",
+                "Authorization": f"Bearer {self.api_key_value}",
             },
         )
 
@@ -115,68 +104,59 @@ class TestSMSAPI(HttpCase):
         self.assertEqual(response_data["success"], "true")
         self.assertIn("message_id", response_data)
 
-        # Verify SMS was created in database
         sms = self.env["sms.message"].search(
             [("address", "=", "+1234567890"), ("body", "=", "Test SMS message")]
         )
         self.assertEqual(len(sms), 1)
         self.assertEqual(sms.phone_user_id, self.test_user)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_duplicate_sms_handling(self, mock_store):
         """Test that duplicate SMS uploads are handled gracefully"""
         mock_store.return_value = None
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key.key}",
+            "Authorization": f"Bearer {self.api_key_value}",
         }
 
-        # Upload first SMS
         response1 = self.url_open(
             "/sms/upload", data=json.dumps(self.sample_payload), headers=headers
         )
         self.assertEqual(response1.status_code, 200)
-        response1_data = response1.json()
-        message_id_1 = response1_data["message_id"]
+        message_id_1 = response1.json()["message_id"]
 
-        # Upload same SMS again
         response2 = self.url_open(
             "/sms/upload", data=json.dumps(self.sample_payload), headers=headers
         )
         self.assertEqual(response2.status_code, 200)
-        response2_data = response2.json()
+        self.assertEqual(response2.json()["message_id"], message_id_1)
 
-        # Should return same message ID (duplicate detection)
-        self.assertEqual(response2_data["message_id"], message_id_1)
-
-        # Verify only one SMS exists in database
         sms_count = self.env["sms.message"].search_count(
             [("address", "=", "+1234567890"), ("body", "=", "Test SMS message")]
         )
         self.assertEqual(sms_count, 1)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_null_character_removal(self, mock_store):
         """Test that null characters are removed from SMS body"""
         mock_store.return_value = None
 
         payload = self.sample_payload.copy()
         payload["body"] = "Test\x00message\x00with\x00nulls"
-        payload["_id"] = 12346  # Different ID to avoid duplicate
+        payload["_id"] = 12346
 
         response = self.url_open(
             "/sms/upload",
             data=json.dumps(payload),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key.key}",
+                "Authorization": f"Bearer {self.api_key_value}",
             },
         )
 
         self.assertEqual(response.status_code, 200)
 
-        # Verify null characters were removed
         sms = self.env["sms.message"].search([("idx", "=", 12346)])
         self.assertEqual(sms.body, "Testmessagewithnulls")
 
@@ -187,19 +167,17 @@ class TestSMSAPI(HttpCase):
             data='{"invalid": json malformed',
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key.key}",
+                "Authorization": f"Bearer {self.api_key_value}",
             },
         )
 
-        # Should return an error, not crash
         self.assertNotEqual(response.status_code, 200)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_missing_required_fields(self, mock_store):
         """Test API handles missing required fields"""
         mock_store.return_value = None
 
-        # Payload missing required _id field
         incomplete_payload = {
             "thread_id": 1,
             "address": "+1234567890",
@@ -211,17 +189,16 @@ class TestSMSAPI(HttpCase):
             data=json.dumps(incomplete_payload),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key.key}",
+                "Authorization": f"Bearer {self.api_key_value}",
             },
         )
 
-        # Should return an error
         self.assertEqual(response.status_code, 400)
         response_data = response.json()
         self.assertIn("error", response_data)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
-    @patch("sms_collector.models.sms_filter_rule.SMSFilterRule.process_sms_message")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_filter_rule.SMSFilterRule.process_sms_message")
     def test_filter_processing_triggered(self, mock_filter, mock_store):
         """Test that filter rules are processed after SMS creation"""
         mock_store.return_value = None
@@ -231,29 +208,19 @@ class TestSMSAPI(HttpCase):
             data=json.dumps(self.sample_payload),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key.key}",
+                "Authorization": f"Bearer {self.api_key_value}",
             },
         )
 
         self.assertEqual(response.status_code, 200)
-
-        # Filter processing should have been called
         mock_filter.assert_called_once()
 
     def test_api_key_scope_validation(self):
         """Test that API key must have correct scope"""
-        # Create API key with wrong scope
         wrong_scope_key = (
             self.env["res.users.apikeys"]
-            .sudo()
-            .create(
-                {
-                    "user_id": self.test_user.id,
-                    "name": "Wrong Scope Key",
-                    "key": "wrong_scope_key_123",
-                    "scope": "read",  # Not 'rpc'
-                }
-            )
+            .with_user(self.test_user)
+            ._generate("read", "Wrong Scope Key")
         )
 
         response = self.url_open(
@@ -261,11 +228,10 @@ class TestSMSAPI(HttpCase):
             data=json.dumps(self.sample_payload),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {wrong_scope_key.key}",
+                "Authorization": f"Bearer {wrong_scope_key}",
             },
         )
 
-        # Should be rejected due to wrong scope
         self.assertEqual(response.status_code, 401)
 
 
@@ -281,22 +247,15 @@ class TestSMSBulkAPI(HttpCase):
             }
         )
 
-        self.api_key = (
+        self.api_key_value = (
             self.env["res.users.apikeys"]
-            .sudo()
-            .create(
-                {
-                    "user_id": self.test_user.id,
-                    "name": "Bulk SMS API Key",
-                    "key": "bulk_api_key_12345",
-                    "scope": "rpc",
-                }
-            )
+            .with_user(self.test_user)
+            ._generate("rpc", "Bulk SMS API Key")
         )
 
         self.auth_headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key.key}",
+            "Authorization": f"Bearer {self.api_key_value}",
         }
 
         self.sample_message = {
@@ -312,7 +271,7 @@ class TestSMSBulkAPI(HttpCase):
     def _bulk_payload(self, messages):
         return json.dumps({"messages": messages})
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_bulk_upload_single_message(self, mock_store):
         """Bulk endpoint accepts a single-element batch"""
         mock_store.return_value = None
@@ -330,7 +289,7 @@ class TestSMSBulkAPI(HttpCase):
         self.assertEqual(body["summary"]["errors"], 0)
         self.assertIn("message_id", body["results"][0])
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_bulk_upload_multiple_messages(self, mock_store):
         """Bulk endpoint stores all messages and returns correct summary"""
         mock_store.return_value = None
@@ -353,13 +312,12 @@ class TestSMSBulkAPI(HttpCase):
         self.assertEqual(body["summary"]["errors"], 0)
         self.assertEqual(len(body["results"]), 5)
 
-        # Verify all stored
         count = self.env["sms.message"].search_count(
             [("phone_user_id", "=", self.test_user.id)]
         )
         self.assertEqual(count, 5)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_bulk_upload_partial_errors(self, mock_store):
         """Invalid messages in a batch are reported individually; valid ones are stored"""
         mock_store.return_value = None
@@ -382,12 +340,11 @@ class TestSMSBulkAPI(HttpCase):
         self.assertEqual(body["summary"]["accepted"], 2)
         self.assertEqual(body["summary"]["errors"], 1)
 
-        # Index 1 should be the error
         error_results = [r for r in body["results"] if "error" in r]
         self.assertEqual(len(error_results), 1)
         self.assertEqual(error_results[0]["index"], 1)
 
-    @patch("sms_collector.models.sms_message.SMSMessage._store_message_as_object")
+    @patch("odoo.addons.sms_collector.models.sms_message.SMSMessage._store_message_as_object")
     def test_bulk_upload_duplicates_counted(self, mock_store):
         """Duplicate messages within a batch do not raise errors"""
         mock_store.return_value = None
@@ -402,14 +359,11 @@ class TestSMSBulkAPI(HttpCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        # Both should succeed (second returns existing record)
         self.assertEqual(body["summary"]["errors"], 0)
         self.assertEqual(len(body["results"]), 2)
-        # Both results point to the same message_id
         ids = [r["message_id"] for r in body["results"]]
         self.assertEqual(ids[0], ids[1])
 
-        # Only one record should exist
         count = self.env["sms.message"].search_count(
             [("address", "=", "+1234567890"), ("body", "=", "Bulk test message")]
         )

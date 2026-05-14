@@ -190,9 +190,12 @@ class TestSMSFilterRule(TransactionCase):
         sms2 = self.env["sms.message"].create(sms_data2)
         self.assertFalse(rule._match_sms(sms2))
 
-    @patch("sms_collector.models.sms_filter_rule.SMSFilterRule._post_to_channel")
+    @patch("odoo.addons.sms_collector.models.sms_filter_rule.SMSFilterRule._post_to_channel")
     def test_channel_action(self, mock_post):
         """Test posting to channel action"""
+        # Create SMS before rule so process_sms_message doesn't auto-fire during create
+        sms = self.env["sms.message"].create(self.sample_sms_data)
+
         rule = self.env["sms.filter.rule"].create(
             {
                 "name": "Channel Rule",
@@ -203,14 +206,15 @@ class TestSMSFilterRule(TransactionCase):
             }
         )
 
-        sms = self.env["sms.message"].create(self.sample_sms_data)
         rule._execute_action(sms)
 
-        # Should have called post to channel
         mock_post.assert_called_once_with(sms)
 
     def test_auto_channel_creation(self):
         """Test automatic channel creation"""
+        # Create SMS first so process_sms_message doesn't fire the rule during create
+        sms = self.env["sms.message"].create(self.sample_sms_data)
+
         rule = self.env["sms.filter.rule"].create(
             {
                 "name": "Auto Channel Rule",
@@ -221,8 +225,6 @@ class TestSMSFilterRule(TransactionCase):
                 "channel_name": "Auto Created OTP Channel",
             }
         )
-
-        sms = self.env["sms.message"].create(self.sample_sms_data)
 
         # Channel shouldn't exist yet
         channel = self.env["mail.channel"].search(
@@ -241,7 +243,13 @@ class TestSMSFilterRule(TransactionCase):
         self.assertEqual(rule.channel_id, channel)
 
     def test_transaction_parsing(self):
-        """Test transaction parsing from SMS"""
+        """Test transaction parsing posts to channel when channel_id is set"""
+        # Create SMS before rule to avoid auto-firing during create
+        sms_data = self.sample_sms_data.copy()
+        sms_data["body"] = "Transfer of 1,250.00 USD received from John Smith"
+        sms_data["idx"] = 12347
+        sms = self.env["sms.message"].create(sms_data)
+
         rule = self.env["sms.filter.rule"].create(
             {
                 "name": "Transaction Rule",
@@ -249,6 +257,7 @@ class TestSMSFilterRule(TransactionCase):
                 "match_value": "transfer",
                 "action_type": "create_transaction",
                 "parse_transaction": True,
+                "channel_id": self.test_channel.id,
                 "transaction_regex": (
                     r"(?P<amount>[\d,]+\.?\d*)\s*(?P<currency>[A-Z]{3})"
                     r".*?from\s*(?P<partner_name>[\w\s]+)"
@@ -256,16 +265,10 @@ class TestSMSFilterRule(TransactionCase):
             }
         )
 
-        # Create SMS with transaction details
-        sms_data = self.sample_sms_data.copy()
-        sms_data["body"] = "Transfer of 1,250.00 USD received from John Smith"
-        sms_data["idx"] = 12347
-        sms = self.env["sms.message"].create(sms_data)
-
-        # Should parse transaction details
-        with patch.object(rule, "_create_transaction") as mock_create:
-            rule._execute_action(sms)
-            mock_create.assert_called_once_with(sms)
+        msgs_before = len(self.test_channel.message_ids)
+        rule._execute_action(sms)
+        # A transaction notification should have been posted to the channel
+        self.assertGreater(len(self.test_channel.message_ids), msgs_before)
 
     def test_rule_sequence_processing(self):
         """Test that stop_processing on the first matching rule prevents further rule execution"""
