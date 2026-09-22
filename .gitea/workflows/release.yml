@@ -133,52 +133,12 @@ jobs:
         **Full Changelog**: https://git.golder.lan/${{ github.repository }}/compare/$PREV_TAG...${{ steps.version.outputs.tag }}
         EOF
 
-    - name: Create Release
-      run: |
-        BODY=$(cat RELEASE_NOTES.md | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-        curl -sSL -X POST \
-          -H "Content-Type: application/json" \
-          -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
-          "https://git.golder.lan/api/v1/repos/${{ github.repository }}/releases" \
-          -d "{
-            \"tag_name\": \"${{ steps.version.outputs.tag }}\",
-            \"target_commitish\": \"$(git rev-parse HEAD)\",
-            \"name\": \"Release ${{ steps.version.outputs.version }}\",
-            \"body\": $BODY,
-            \"draft\": false,
-            \"prerelease\": ${{ steps.version.outputs.prerelease }}
-          }" || echo "Release creation may have failed or already exists"
-
-    - name: Install MinIO client
-      run: |
-        MC_VERSION="RELEASE.2025-08-13T08-35-41Z"
-        curl -fsSL "https://github.com/minio/mc/releases/download/${MC_VERSION}/mc.linux-amd64.${MC_VERSION}" -o /tmp/mc
-        chmod +x /tmp/mc
-        /tmp/mc --version
-
-    - name: Upload to MinIO
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        body_path: RELEASE_NOTES.md
+        draft: false
+        prerelease: ${{ steps.version.outputs.prerelease }}
+        files: dist/*.zip
       env:
-        MINIO_HOST: ${{ secrets.MINIO_HOST }}
-        MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
-        MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-        MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
-        ODOO_VERSION: '17.0'
-      run: |
-        MINIO_ENDPOINT=$(echo "${MINIO_HOST}" | sed -E 's|^https?://||')
-        /tmp/mc alias set cdn \
-          "https://${MINIO_ENDPOINT}" \
-          "${MINIO_ACCESS_KEY}" \
-          "${MINIO_SECRET_KEY}" \
-          --insecure
-
-        REPO_NAME="${{ steps.version.outputs.repo_name }}"
-        ZIPFILE="dist/${REPO_NAME}-${{ steps.version.outputs.version }}.zip"
-
-        echo "Uploading ${REPO_NAME}..."
-        /tmp/mc cp --insecure "$ZIPFILE" \
-          "cdn/${MINIO_BUCKET}/odoo/custom-modules/${ODOO_VERSION}/${REPO_NAME}/${{ steps.version.outputs.version }}.zip"
-        /tmp/mc cp --insecure "$ZIPFILE" \
-          "cdn/${MINIO_BUCKET}/odoo/custom-modules/${ODOO_VERSION}/${REPO_NAME}/latest.zip"
-
-        echo ""
-        echo "All modules uploaded to MinIO"
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
